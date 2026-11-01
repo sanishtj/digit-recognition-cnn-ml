@@ -1,0 +1,9 @@
+# Copy to feedback-config.toml. Missing/disabled config means MNIST-only training.
+[feedback]
+enabled = false
+source = "google" # "google", "csv", or "xlsx"
+max_samples = 2000 # 1..10000 rows, loaded in sheet order; review first
+
+# For source="csv" or "xlsx", export the first Google Sheet to this path.
+# Paths are relative to this config; Image Path entries are relative to the table.
+path = "feedback-data/MNIST Feedback.csv"
