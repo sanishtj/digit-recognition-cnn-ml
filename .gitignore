@@ -6,3 +6,10 @@
 /.vs/slnx.sqlite
 /.vs/VSWorkspaceState.json
 /.idea
+
+/.streamlit/secrets.toml
+/feedback-config.toml
+/feedback-data/
+/.venv/
+__pycache__/
+.ipynb_checkpoints/

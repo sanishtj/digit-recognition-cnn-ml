@@ -3,3 +3,8 @@ numpy
 streamlit
 pillow
 streamlit-drawable-canvas
+requests>=2.32.4,<3
+pandas>=2.2,<4
+openpyxl>=3.1.5,<4
+matplotlib
+ipython

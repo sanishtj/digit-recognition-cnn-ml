@@ -2,8 +2,10 @@ import streamlit as st
 import numpy as np
 import tensorflow as tf
 
+import uuid
 from PIL import Image
 from streamlit_drawable_canvas import st_canvas
+from feedback import submit_feedback
 
 
 # --------------------------------------------------
@@ -46,6 +48,9 @@ defaults = {
     "normalized_image": None,
     "prediction": None,
     "drawing_hash": None,
+    "show_feedback": False,
+    "feedback_saved": False,
+    "feedback_id": None,
 }
 
 for key, value in defaults.items():
@@ -58,6 +63,9 @@ def reset_pipeline():
     st.session_state.resized_image = None
     st.session_state.normalized_image = None
     st.session_state.prediction = None
+    st.session_state.show_feedback = False
+    st.session_state.feedback_saved = False
+    st.session_state.feedback_id = None
 
 
 # --------------------------------------------------
@@ -168,6 +176,9 @@ def run_full_pipeline(image_data):
     st.session_state.resized_image = resized
     st.session_state.normalized_image = normalized
     st.session_state.prediction = prediction
+    st.session_state.show_feedback = False
+    st.session_state.feedback_saved = False
+    st.session_state.feedback_id = str(uuid.uuid4())
 
 
 # --------------------------------------------------
@@ -346,6 +357,71 @@ with col_result:
             st.divider()
             st.metric("Confidence", f"{confidence * 100:.2f}%")
             st.progress(confidence)
+
+            st.markdown(
+                "Built with MNIST's **60,000** handwritten training digits "
+                "(**6,000** reserved for validation) and evaluated on "
+                "**10,000** test images from `tensorflow.keras.datasets.mnist`. "
+                "Wrong answer? Your handwriting must be super… unique! "
+                "Just kidding—the CNN needs more practice, not you. 😄 "
+                "Share the correct digit and your doodle may join a future "
+                "training iteration. No instant learning or guaranteed improvement!"
+            )
+            with st.container(key="wrong_feedback"):
+                st.markdown(
+                    "<style>.st-key-wrong_feedback button {"
+                    "background-color:#b91c1c !important;color:white !important;"
+                    "border-color:#b91c1c !important;font-weight:800 !important;"
+                    "}</style>",
+                    unsafe_allow_html=True
+                )
+                if st.button(
+                    "Wrong?", key="wrong_button", use_container_width=True,
+                    disabled=st.session_state.feedback_saved
+                ):
+                    st.session_state.show_feedback = True
+
+            if st.session_state.feedback_saved:
+                st.success("Saved! Your digit has joined the CNN's homework pile. 📝")
+            elif st.session_state.show_feedback:
+                st.caption(
+                    "With your permission, we save the processed 28×28 PNG, "
+                    "predicted/correct digits, timestamp and a submission ID "
+                    "in private Google Drive/Sheets for review and future training. "
+                    "No name or original canvas is collected."
+                )
+                with st.form(f"correction_{st.session_state.feedback_id}"):
+                    correct_digit = st.selectbox(
+                        "What digit did you mean?",
+                        [digit for digit in range(10) if digit != predicted_digit],
+                        index=None, placeholder="Choose the correct digit"
+                    )
+                    consent = st.checkbox("I agree to save this digit for future training.")
+                    submitted = st.form_submit_button("Submit correction")
+                if submitted:
+                    if correct_digit is None or not consent:
+                        st.warning("Choose a digit and agree to save it first.")
+                    else:
+                        try:
+                            feedback_image = st.session_state.normalized_image
+                            feedback_id = st.session_state.feedback_id
+                            if feedback_image is None or feedback_id is None:
+                                raise ValueError("Predict the current drawing first.")
+                            with st.spinner("Sending homework to the CNN…"):
+                                submit_feedback(
+                                    feedback_image,
+                                    predicted_digit, correct_digit,
+                                    feedback_id
+                                )
+                            st.session_state.feedback_saved = True
+                            st.session_state.show_feedback = False
+                            st.rerun()
+                        except Exception:
+                            st.error(
+                                "Could not save the correction. Check the Google "
+                                "feedback configuration or try again. A retry "
+                                "will not create another copy of this submission."
+                            )
         else:
             st.markdown(
                 "<div style='font-size:76px; font-weight:700; "
@@ -389,6 +465,7 @@ with step1:
         use_container_width=True,
         disabled=not drawing_available
     ):
+        reset_pipeline()
         st.session_state.gray_image = convert_to_grayscale(image_data)
         st.session_state.resized_image = None
         st.session_state.normalized_image = None
@@ -400,6 +477,9 @@ with step2:
         use_container_width=True,
         disabled=st.session_state.gray_image is None
     ):
+        st.session_state.show_feedback = False
+        st.session_state.feedback_saved = False
+        st.session_state.feedback_id = None
         st.session_state.resized_image = resize_image(
             st.session_state.gray_image
         )
@@ -412,6 +492,9 @@ with step3:
         use_container_width=True,
         disabled=st.session_state.resized_image is None
     ):
+        st.session_state.show_feedback = False
+        st.session_state.feedback_saved = False
+        st.session_state.feedback_id = None
         normalized, _ = normalize_image(st.session_state.resized_image)
         st.session_state.normalized_image = normalized
         st.session_state.prediction = None
@@ -424,6 +507,10 @@ with step4:
     ):
         _, model_input = normalize_image(st.session_state.resized_image)
         st.session_state.prediction = predict_digit(model_input)
+        st.session_state.show_feedback = False
+        st.session_state.feedback_saved = False
+        st.session_state.feedback_id = str(uuid.uuid4())
+        st.rerun()
 
 
 # --------------------------------------------------
