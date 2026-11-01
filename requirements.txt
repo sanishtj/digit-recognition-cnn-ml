@@ -1,49 +1,5 @@
-LIBRARIES USED IN THIS PROJECT
-==============================
-
-Files: train-model.ipynb (Notebook) and app.py (App)
-
-TensorFlow / Keras
-  Used in: Both
-  Purpose: Load MNIST, build and train the CNN, save/load the model,
-		   and make predictions.
-
-NumPy
-  Used in: Both
-  Purpose: Work with image arrays, normalize pixels, reshape inputs,
-		   and process prediction scores.
-
-Matplotlib
-  Used in: Notebook
-  Purpose: Display digit images and plot training results and
-		   confidence scores.
-
-IPython
-  Used in: Notebook
-  Purpose: Display figures and clear previous output.
-
-Streamlit
-  Used in: App
-  Purpose: Build the interactive web interface.
-
-Pillow (imported as PIL)
-  Used in: App
-  Purpose: Convert, crop, resize, and centre images.
-
+tensorflow
+numpy
+streamlit
+pillow
 streamlit-drawable-canvas
-  Used in: App
-  Purpose: Provide the canvas for drawing digits.
-
-random
-  Used in: Notebook
-  Purpose: Select random training images.
-
-time
-  Used in: Notebook
-  Purpose: Pause between image-display batches.
-
-NOTES
------
-- random and time are included with Python; no installation is needed.
-- Keras is accessed through TensorFlow in this project.
-- This is a descriptive library list, not a pip requirements file.
