@@ -3,9 +3,12 @@ import numpy as np
 import tensorflow as tf
 
 import uuid
+import logging
 from PIL import Image
 from streamlit_drawable_canvas import st_canvas
-from feedback import submit_feedback
+from feedback import (
+    FeedbackError, check_google_connection, diagnostics_enabled, submit_feedback
+)
 
 
 # --------------------------------------------------
@@ -66,6 +69,19 @@ def reset_pipeline():
     st.session_state.show_feedback = False
     st.session_state.feedback_saved = False
     st.session_state.feedback_id = None
+
+
+def show_feedback_failure(error):
+    """Only explicitly sanitized diagnostics may be shown to visitors."""
+    if isinstance(error, FeedbackError):
+        st.error(str(error))
+    else:
+        reference = str(uuid.uuid4())
+        logging.getLogger("mnist.feedback").error(
+            "Feedback UI failure exception_type=%s request_id=%s",
+            type(error).__name__, reference
+        )
+        st.error(f"Unexpected feedback error. Check Streamlit server logs. Reference: {reference}")
 
 
 # --------------------------------------------------
@@ -268,6 +284,26 @@ with st.sidebar:
 # 6. DRAWING CANVAS AND QUICK PREDICTION
 # --------------------------------------------------
 
+if diagnostics_enabled():
+    with st.expander("Google feedback diagnostics"):
+        st.caption(
+            "Owner debugging: checks authentication, Script Properties, first-sheet "
+            "headers and Sheet/Drive write access. Creates and trashes one tiny "
+            "Drive test file; no feedback row is added. Disable FEEDBACK_DIAGNOSTICS "
+            "after testing—this button is visible to all visitors while enabled."
+        )
+        if st.button("Check Google connection", key="google_health_check"):
+            try:
+                with st.spinner("Checking Google Sheets and Drive…"):
+                    check_google_connection()
+                st.success("Google connection, headers, and Sheet/Drive write checks passed.")
+            except Exception as error:
+                show_feedback_failure(error)
+        st.caption(
+            "Streamlit Cloud: Manage app → logs. Google: Apps Script → Executions. "
+            "Match the request reference shown on a failure. Do not share secrets."
+        )
+
 st.subheader("Step 1 — Draw your digit")
 st.write("Draw one digit from 0 to 9 using your mouse or trackpad.")
 
@@ -416,12 +452,9 @@ with col_result:
                             st.session_state.feedback_saved = True
                             st.session_state.show_feedback = False
                             st.rerun()
-                        except Exception:
-                            st.error(
-                                "Could not save the correction. Check the Google "
-                                "feedback configuration or try again. A retry "
-                                "will not create another copy of this submission."
-                            )
+                        except Exception as error:
+                            show_feedback_failure(error)
+                            st.caption("Retrying reuses this submission ID; a saved correction will not be duplicated.")
         else:
             st.markdown(
                 "<div style='font-size:76px; font-weight:700; "

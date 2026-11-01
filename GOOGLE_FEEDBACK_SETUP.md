@@ -76,7 +76,7 @@ FEEDBACK_SECRET = "THE_SAME_SECRET_AS_THE_SCRIPT_PROPERTY"
 
 For **Streamlit Community Cloud**, paste those same two entries into **App settings
 → Secrets**. Do not provide the folder or spreadsheet ID to Streamlit: those live
-in Apps Script Properties only. The app reads secrets only when sending feedback,
+ in Apps Script Properties only. Google credentials are required only for feedback uploads or diagnostic checks,
 so prediction still works without Google configuration. Restart after configuration
 changes. Launch with `python -m streamlit run app.py`.
 
@@ -96,7 +96,76 @@ feedback configuration and `feedback-data/`; examples are safe to commit.
 4. Change/clear the canvas: the previous correction must disappear.
 5. If upload fails, check matching secrets, `/exec` URL, Script Properties, exact
    headers, account permissions and the Apps Script **Executions** panel. Errors
-   shown publicly are intentionally generic. There is no offline upload queue.
+   now show safe codes and a request reference. There is no offline upload queue.
+
+### Drive/Sheets permissions and troubleshooting
+
+**How permissions work:** the Web app runs as the Google account that deployed it
+when **Execute as: Me** is selected. That account must authorize Apps Script to use
+Drive and Sheets and must have editing access to the target spreadsheet and folder.
+Streamlit does not need Google Drive sharing access, an OAuth token or a service
+account. Keep the folder and Sheet private. If they belong to another Google
+account, share them privately with the deploying account with editing access.
+
+1. Paste the updated `google-apps-script/Code.gs` into the Apps Script editor and save.
+2. Select **testSetup** in the function dropdown next to **Run**, then click **Run**.
+   Do not run `doPost` directly: it expects an HTTP event.
+3. If asked, select **Review permissions**, choose the intended Google account, and
+   authorize the Drive/Sheets scopes of your own script. Do not bypass a Workspace
+   administrator's policy; ask the administrator if authorization is blocked.
+4. Read the editor's **Execution log** or **Executions → latest execution → logs**.
+   A result with `success: true` confirms properties, first-tab headers, Sheet write
+   access and Drive create/trash permission. The check rewrites the existing A1
+   header, creates one tiny `.txt` file in the folder, then trashes it. It does not
+   append a feedback row. A failed trash operation may leave that tiny test file.
+5. Update the actual Web app: **Deploy → Manage deployments → Edit (pencil) →
+   Version: New version → Deploy**. Confirm **Execute as: Me** and **Anyone** access.
+   Saving editor code or running `testSetup` alone does NOT update the deployed `/exec`
+   version. Reauthorize when prompted. If making a new deployment, update its URL
+   in Streamlit Secrets; editing the existing deployment preserves its URL.
+6. Commit/push the changed Python files to the Streamlit deployment branch too.
+
+**Streamlit connection check:** temporarily add `FEEDBACK_DIAGNOSTICS = true`
+(a TOML boolean, not a quoted string) to **Streamlit Cloud → App settings → Secrets**
+or local `.streamlit/secrets.toml`. Restart if needed. Expand **Google feedback
+diagnostics** above the canvas and click **Check Google connection**. This runs the
+same write probe through the real deployed endpoint. Set the flag back to `false`
+after debugging, since all visitors can use the button while it is enabled and
+each click consumes Google quota. No secret values are displayed in the panel.
+
+For local testing, `python feedback.py --check` runs the same authenticated check
+using existing server-side secrets/environment variables. It never prints those
+values and does not require enabling the UI flag.
+
+**Where to find server logs:** in Streamlit Cloud open **Manage app → logs**. Locally
+read the terminal running Streamlit. Look for `Google feedback action=... code=...
+request_id=...`. In **Apps Script → Executions**, open the matching POST execution
+and find the same `request_id`. You can share the **code and reference**, not secrets
+or complete request/response bodies. Raw Google error messages and HTML pages are
+deliberately not logged because they may contain account/resource identifiers.
+
+| Code | What to check |
+| --- | --- |
+| `LOCAL_CONFIG` | Streamlit `GOOGLE_SCRIPT_URL` / `FEEDBACK_SECRET`, valid HTTPS `/exec` URL |
+| `AUTH_FAILED` | Secret matches Apps Script `FEEDBACK_SECRET`; correct deployed project |
+| `SCRIPT_CONFIG` | Script Properties contain actual `SPREADSHEET_ID` / `FOLDER_ID`, not names or full URLs |
+| `SHEET_ACCESS` | Correct Google Sheets ID, deploying account access; convert `.xlsx` files to Google Sheets |
+| `SHEET_HEADERS` | Exact A1:F1 headers on the **first worksheet tab** |
+| `SHEET_WRITE` | Editing permission, protected A1/worksheet, Sheet quota |
+| `DRIVE_ACCESS` | Correct folder ID, deploying account's folder access and Drive authorization |
+| `DRIVE_WRITE` | Create/trash permission, authorization, Drive storage/quota |
+| `NON_JSON` / `HTTP_ERROR` | Login/permission HTML, wrong URL, anonymous access, deployment authorization, Workspace restrictions |
+| `UNKNOWN_ACTION` / `GOOGLE_REJECTED` | Old/wrong deployed Code.gs; deploy a new version and inspect Google Executions |
+| `TIMEOUT` / `NETWORK` | Google quotas/executions, service/network availability; safe to retry a submission |
+
+If the editor's `testSetup` succeeds but Streamlit fails, focus on the deployed
+version, `/exec` URL, anonymous access and matching secret. If Streamlit's health
+check passes but submissions fail, retry a correction and report its new code and
+reference; the failure is likely in validation, file creation or row appending.
+
+Offline regression tests: `python -m unittest discover -s tests -v` and
+`node --test tests/test_google_bridge.js` (Node is needed only for the mocked script
+tests, not for Streamlit deployment).
 
 ## 5. Optional training configuration
 

@@ -8,7 +8,7 @@ from unittest.mock import patch
 import numpy as np
 from streamlit.testing.v1 import AppTest
 
-from feedback import ROOT
+from feedback import ROOT, FeedbackError
 
 
 class AppFeedbackTests(unittest.TestCase):
@@ -28,6 +28,12 @@ class AppFeedbackTests(unittest.TestCase):
         upload = patch("feedback.submit_feedback", return_value={"success": True})
         self.upload = upload.start()
         self.addCleanup(upload.stop)
+        diagnostics = patch("feedback.diagnostics_enabled", return_value=False)
+        self.diagnostics = diagnostics.start()
+        self.addCleanup(diagnostics.stop)
+        health = patch("feedback.check_google_connection", return_value={"success": True})
+        self.health = health.start()
+        self.addCleanup(health.stop)
         self.app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=20).run()
         self.assert_no_errors()
         self.app.button[0].click().run()
@@ -77,6 +83,37 @@ class AppFeedbackTests(unittest.TestCase):
         self.assertFalse(self.app.session_state["show_feedback"])
         self.assertFalse(self.app.session_state["feedback_saved"])
         self.upload.assert_not_called()
+
+    def test_safe_error_code_and_reference_are_displayed(self):
+        self.upload.side_effect = FeedbackError("SHEET_HEADERS", "safe-reference")
+        self.submit_form()
+        output = " ".join(error.value for error in self.app.error)
+        self.assertIn("SHEET_HEADERS", output)
+        self.assertIn("safe-reference", output)
+        self.assertFalse(self.app.session_state["feedback_saved"])
+
+    def test_unexpected_exception_message_is_not_displayed(self):
+        self.upload.side_effect = RuntimeError("PRIVATE_SECRET")
+        self.submit_form()
+        output = " ".join(error.value for error in self.app.error)
+        self.assertNotIn("PRIVATE_SECRET", output)
+        self.assertIn("Reference:", output)
+
+    def test_connection_check_panel(self):
+        self.diagnostics.return_value = True
+        self.app.run()
+        self.app.button(key="google_health_check").click().run()
+        self.assert_no_errors()
+        self.health.assert_called_once()
+        self.assertTrue(any("checks passed" in success.value for success in self.app.success))
+
+    def test_connection_check_reports_permission_failure(self):
+        self.diagnostics.return_value = True
+        self.health.side_effect = FeedbackError("DRIVE_ACCESS", "health-reference")
+        self.app.run()
+        self.app.button(key="google_health_check").click().run()
+        self.assert_no_errors()
+        self.assertIn("DRIVE_ACCESS", " ".join(error.value for error in self.app.error))
 
 
 if __name__ == "__main__":

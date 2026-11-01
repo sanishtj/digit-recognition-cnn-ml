@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 from PIL import Image
+import requests
 
 import feedback
 
@@ -82,6 +83,7 @@ class FeedbackTests(unittest.TestCase):
             feedback._post("export", offset=0, limit=50)
         self.assertEqual(post.call_args.kwargs["json"]["secret"], "private")
         self.assertEqual(post.call_args.kwargs["timeout"], (10, 90))
+        self.assertRegex(post.call_args.kwargs["json"]["request_id"], r"^[a-f0-9-]{36}$")
         response.raise_for_status.assert_called_once()
 
     def test_service_failure_is_not_success(self):
@@ -97,6 +99,78 @@ class FeedbackTests(unittest.TestCase):
         with patch.object(feedback, "ROOT", self.root), patch.dict(
                 feedback.os.environ, {"GOOGLE_SCRIPT_URL": url, "FEEDBACK_SECRET": "private"}):
             self.assertEqual(feedback.credentials(), (url, "private"))
+
+    def test_sanitized_google_errors_are_actionable(self):
+        response = Mock()
+        response.json.return_value = {
+            "success": False, "code": "DRIVE_WRITE", "error": "SECRET_AND_PRIVATE_FOLDER_ID"
+        }
+        with patch.object(feedback, "credentials", return_value=("https://example.test/private-id", "PRIVATE_SECRET")), \
+                patch("requests.post", return_value=response) as post, \
+                self.assertLogs("mnist.feedback", level="ERROR") as logs, \
+                self.assertRaises(feedback.FeedbackError) as caught:
+            feedback._post("health")
+        self.assertEqual(caught.exception.code, "DRIVE_WRITE")
+        self.assertEqual(caught.exception.request_id, post.call_args.kwargs["json"]["request_id"])
+        output = str(caught.exception) + " ".join(logs.output)
+        for sensitive in ["PRIVATE_SECRET", "private-id", "SECRET_AND_PRIVATE_FOLDER_ID"]:
+            self.assertNotIn(sensitive, output)
+
+    def test_transport_failure_categories_do_not_leak_messages(self):
+        http_response = Mock(status_code=403)
+        cases = [
+            (requests.Timeout("LEAKED_SECRET"), "TIMEOUT"),
+            (requests.ConnectionError("LEAKED_SECRET"), "NETWORK"),
+            (requests.HTTPError("LEAKED_SECRET", response=http_response), "HTTP_ERROR"),
+        ]
+        for exception, code in cases:
+            with self.subTest(code=code), \
+                    patch.object(feedback, "credentials", return_value=("https://example.test", "secret")), \
+                    patch("requests.post", side_effect=exception), \
+                    self.assertLogs("mnist.feedback", level="ERROR") as logs, \
+                    self.assertRaises(feedback.FeedbackError) as caught:
+                feedback._post("submit")
+            self.assertEqual(caught.exception.code, code)
+            self.assertNotIn("LEAKED_SECRET", str(caught.exception) + " ".join(logs.output))
+            if code == "HTTP_ERROR":
+                self.assertIn("403", " ".join(logs.output))
+
+    def test_html_and_invalid_json_response_categories(self):
+        for payload, expected in [(None, "NON_JSON"), (["private data"], "BAD_RESPONSE"),
+                                  ({"success": False, "error": "private data"}, "GOOGLE_REJECTED")]:
+            response = Mock()
+            if payload is None:
+                response.json.side_effect = ValueError("PRIVATE_HTML_TOKEN")
+            else:
+                response.json.return_value = payload
+            with self.subTest(expected=expected), \
+                    patch.object(feedback, "credentials", return_value=("https://example.test", "secret")), \
+                    patch("requests.post", return_value=response), \
+                    self.assertLogs("mnist.feedback", level="ERROR") as logs, \
+                    self.assertRaises(feedback.FeedbackError) as caught:
+                feedback._post("health")
+            self.assertEqual(caught.exception.code, expected)
+            self.assertNotIn("private data", " ".join(logs.output))
+            self.assertNotIn("PRIVATE_HTML_TOKEN", str(caught.exception))
+
+    def test_bad_configuration_is_logged_without_contents(self):
+        with patch.object(feedback, "credentials", side_effect=ValueError("PRIVATE_SECRET")), \
+                self.assertLogs("mnist.feedback", level="ERROR") as logs, \
+                self.assertRaises(feedback.FeedbackError) as caught:
+            feedback._post("health")
+        self.assertEqual(caught.exception.code, "LOCAL_CONFIG")
+        self.assertNotIn("PRIVATE_SECRET", str(caught.exception) + " ".join(logs.output))
+
+    def test_health_check_uses_authenticated_transport(self):
+        with patch.object(feedback, "_post", return_value={"success": True}) as post:
+            feedback.check_google_connection()
+        post.assert_called_once_with("health")
+
+    def test_diagnostics_are_opt_in(self):
+        with patch.dict(feedback.os.environ, {"FEEDBACK_DIAGNOSTICS": "false"}):
+            self.assertFalse(feedback.diagnostics_enabled())
+        with patch.dict(feedback.os.environ, {"FEEDBACK_DIAGNOSTICS": "true"}):
+            self.assertTrue(feedback.diagnostics_enabled())
 
     def test_credentials_reject_non_google_endpoint(self):
         with patch.object(feedback, "ROOT", self.root), patch.dict(
